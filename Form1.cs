@@ -11,7 +11,7 @@ using System.IO;
 using System.Net;
 using System.Net.Sockets;
 using System.Threading;
-
+//todo:服务端停止,我这里才能收到消息
 namespace ChatClient
 {
     public partial class Form1 : Form
@@ -19,7 +19,12 @@ namespace ChatClient
         public Form1()
         {
             InitializeComponent();
-            CheckForIllegalCrossThreadCalls = false;//禁用此异常
+            CheckForIllegalCrossThreadCalls = false;//禁用此异常    
+            //直接测试显示ok    
+            //pictureBox1.Image = ByteArray2Image(HexString2Bytes(JpegData.pic));
+            textBox1.Text = JpegData.SERVER_ADDRESS;
+            textBox2.Text = JpegData.SEVER_PORT;
+
         }
 
         #region 变量
@@ -38,31 +43,29 @@ namespace ChatClient
         //创建编写器
         public TextWriter wReader = null;
 
-        char[] tmp_v_rec_buff = new char[4096];  //接收socket缓存
-        char[] p_jpeg_buff = new char[1024 * 1024];
-        int jpeg_pos = 0;      //bi
+
+        char[] p_jpeg_buff = new char[1024*1024];//接收socket缓存
+        string imgHexStr = null;
+        int jpeg_pos = 0;   
         #endregion
 
         //显示信息
         public void AcceptMessage()
         {
             string sTemp; //临时存储读取的字符串
-            int i;
             while (bConnected)
             {
                 try
                 {
                     //连续从当前流中读取字符串直至结束
-                    i=tReader.ReadBlock(tmp_v_rec_buff,0,4096);
-                    if (i != 0)
+                    sTemp=tReader.ReadLine();
+                    if (sTemp.Length != 0)
                     {
-                        //richTextBox2_KeyPress()和AcceptMessage()
-                        //都将向richTextBox1写字符，可能访问有冲突，
-                        //所以，需要多线程互斥
                         lock (this)
                         {
-                            richTextBox1.Text = "服务器：" + tmp_v_rec_buff + "\n" + richTextBox1.Text;
-                            draw_jpeg(tmp_v_rec_buff, i);
+                            richTextBox1.Text = "服务器：" + sTemp + "\n" + richTextBox1.Text;
+                            draw_jpeg(sTemp, sTemp.Length);
+                            Console.WriteLine("sTempLenth: "+sTemp.Length);
                         }
                     }
                 }
@@ -77,34 +80,94 @@ namespace ChatClient
             socket.Close();
         }
         //把socket接收的数据提取jpg头尾标志(ffd8...ffd9)
-        void draw_jpeg(char[] data, int len)
+        void draw_jpeg(String data, int len)
         {
             int i;
+            Console.WriteLine("data[1]:"+data[1]);
             for (i = 0; i < len; i++)
             {
-                //jpg头
-                if (data[i] == 0xff && data[i + 1] == 0xd8)
+                //在数据包中检测到jpg头
+                if (data[i] == 'F' && data[i + 1] == 'F' && data[i + 2] == 'D' && data[i + 3] == '8')
                 {
-                    jpeg_pos = 0;
+                    jpeg_pos = 0;  //jpeg_buffer数组标号
                 }
-                p_jpeg_buff[jpeg_pos++] = data[i];
+                //循环写入新的数组(分离出来独立的jpeg数据)
+                //p_jpeg_buff[jpeg_pos++] = data[i];
+                imgHexStr += data[i];
+                jpeg_pos++;
                 if (jpeg_pos >= 1024 * 1024)
                 {
                     jpeg_pos = 0;
                     break;
                 }
-                //jpg尾
-                if (jpeg_pos >= 2 &&
-                    p_jpeg_buff[jpeg_pos - 2] == 0xff &&
-                    p_jpeg_buff[jpeg_pos - 1] == 0xd9 &&
-                    p_jpeg_buff[0] == 0xff &&
-                    p_jpeg_buff[1] == 0xd8)
+                //在数据包中检测到jpg尾
+                //if (jpeg_pos >= 4 &&
+                //    p_jpeg_buff[jpeg_pos - 3] == 'F' && p_jpeg_buff[jpeg_pos - 4] == 'F' &&
+                //    p_jpeg_buff[jpeg_pos - 1] == '9' && p_jpeg_buff[jpeg_pos - 2] == 'D' &&
+                //    p_jpeg_buff[0] == 'F' && p_jpeg_buff[1] == 'F' && p_jpeg_buff[2] == 'D' && p_jpeg_buff[3] == '8')
+                if (jpeg_pos >= 4 &&
+                    imgHexStr[jpeg_pos - 3] == 'F' && imgHexStr[jpeg_pos - 4] == 'F' &&
+                    imgHexStr[jpeg_pos - 1] == '9' && imgHexStr[jpeg_pos - 2] == 'D' &&
+                    imgHexStr[0] == 'F' && imgHexStr[1] == 'F' && imgHexStr[2] == 'D' && imgHexStr[3] == '8')
                 {
-                    pictureBox1.Image=ByteArray2Image(HexString2Bytes(p_jpeg_buff));                    
+                    //pictureBox1.Image=ByteArray2Image(Char2Byte(p_jpeg_buff));    
+                    pictureBox1.Image = ByteArray2Image(HexString2Bytes(imgHexStr));
                 }
 
             }
         }
+        #region[hex2pic]
+        /// <summary>
+        /// Char2Byte
+        /// </summary>
+        /// <param name="c"></param>
+        /// <returns></returns>
+        public static byte[] Char2Byte(char[] c)
+        {
+            int i = 0;
+            byte[] b = new byte[c.Length * 2];
+            for (i = 0; i < c.Length; i++)
+            {
+                b[2 * i] = (byte)((c[i] & 0xFF00) >> 8);
+                b[2 * i + 1] = (byte)(c[i] & 0xFF);
+            }
+            return b;
+        }
+        /// <summary>
+        /// hex字符串to字节数组
+        /// </summary>
+        /// <param name="s"></param>
+        /// <returns></returns>
+        public static byte[] HexString2Bytes(String hexString)
+        {
+            hexString = hexString.Replace(" ", "");
+            if (hexString.Length % 2 != 0)
+            {
+                throw new ArgumentException("参数长度不正确");
+            }
+
+            byte[] returnBytes = new byte[hexString.Length / 2];
+            for (int i = 0; i < returnBytes.Length; i++)
+            {
+                returnBytes[i] = Convert.ToByte(hexString.Substring(i * 2, 2), 16);
+            }
+
+            return returnBytes;
+        }
+        /// <summary>
+        /// 字节数组生成图片
+        /// </summary>
+        /// <param name="Bytes">字节数组</param>
+        /// <returns>图片</returns>
+        private Image ByteArray2Image(byte[] Bytes)
+        {
+            using (MemoryStream ms = new MemoryStream(Bytes))
+            {
+                Image outputImg = Image.FromStream(ms);
+                return outputImg;
+            }
+        }
+        #endregion
 
         //创建与服务器的连接，侦听并显示聊天信息
         private void button1_Click(object sender, EventArgs e)
@@ -167,42 +230,7 @@ namespace ChatClient
                 }
             }
         }
-        #region[hex2pic]
-        /// <summary>
-        /// hex字符串to字节数组
-        /// </summary>
-        /// <param name="s"></param>
-        /// <returns></returns>
-        public static byte[] HexString2Bytes(String hexString)
-        {
-            hexString = hexString.Replace(" ", "");
-            if (hexString.Length % 2 != 0)
-            {
-                throw new ArgumentException("参数长度不正确");
-            }
-
-            byte[] returnBytes = new byte[hexString.Length / 2];
-            for (int i = 0; i < returnBytes.Length; i++)
-            {
-                returnBytes[i] = Convert.ToByte(hexString.Substring(i * 2, 2), 16);
-            }
-
-            return returnBytes;
-        }
-        /// <summary>
-        /// 字节数组生成图片
-        /// </summary>
-        /// <param name="Bytes">字节数组</param>
-        /// <returns>图片</returns>
-        private Image ByteArray2Image(byte[] Bytes)
-        {
-            using (MemoryStream ms = new MemoryStream(Bytes))
-            {
-                Image outputImg = Image.FromStream(ms);
-                return outputImg;
-            }
-        }
-        #endregion
+        
 
         //关闭窗体时断开socket连接，并终止线程（否则，VS调试程序将仍处于运行状态）
         private void Form1_FormClosing(object sender, FormClosingEventArgs e)
@@ -211,6 +239,7 @@ namespace ChatClient
             {
                 socket.Close();
                 tAcceptMsg.Abort();
+                //todo:关闭线程
             }
             catch
             { }
