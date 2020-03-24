@@ -3,88 +3,168 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.Data;
 using System.Drawing;
-using System.Linq;
-using System.Text;
-using System.Windows.Forms;
-//添加新的名称空间引用
 using System.IO;
+using System.Linq;
 using System.Net;
 using System.Net.Sockets;
+using System.Text;
 using System.Threading;
-//todo:服务端停止,我这里才能收到消息
+using System.Windows.Forms;
+
 namespace ChatClient
 {
     public partial class Form1 : Form
     {
+        private Socket MySocket = null;// Socket
+
+        public const int TCPBufferSize = 1460;//缓存的最大数据个数
+        public byte[] TCPBuffer = new byte[TCPBufferSize];//缓存数据的数组
+        string receData = "";
+
         public Form1()
         {
             InitializeComponent();
-            CheckForIllegalCrossThreadCalls = false;//禁用此异常    
-            //直接测试显示ok    
-            //pictureBox1.Image = ByteArray2Image(HexString2Bytes(JpegData.pic));
-            textBox1.Text = JpegData.SERVER_ADDRESS;
-            textBox2.Text = JpegData.SEVER_PORT;
-
         }
 
-        #region 变量
-        //客户机与服务器之间的连接状态
-        public bool bConnected = false;
-        //侦听线程
-        public Thread tAcceptMsg = null;
-        //用于Socket通信的IP地址和端口
-        public IPEndPoint IPP = null;
-        //Socket通信
-        public Socket socket = null;
-        //网络访问的基础数据流
-        public NetworkStream nStream = null;
-        //创建读取器
-        public TextReader tReader = null;
-        //创建编写器
-        public TextWriter wReader = null;
-
-
-        char[] p_jpeg_buff = new char[1024*1024];//接收socket缓存
-        string imgHexStr = null;
-        int jpeg_pos = 0;   
-        #endregion
-
-        //显示信息
-        public void AcceptMessage()
+        private void Form1_Load(object sender, EventArgs e)
         {
-            string sTemp; //临时存储读取的字符串
-            while (bConnected)
-            {
-                try
-                {
-                    //连续从当前流中读取字符串直至结束
-                    sTemp=tReader.ReadLine();
-                    if (sTemp.Length != 0)
-                    {
-                        lock (this)
-                        {
-                            richTextBox1.Text = "服务器：" + sTemp + "\n" + richTextBox1.Text;
-                            draw_jpeg(sTemp, sTemp.Length);
-                            Console.WriteLine("sTempLenth: "+sTemp.Length);
-                        }
+            textBox1.Text = "192.168.0.8";
+            textBox2.Text = "8089";
+            checkBox1.Checked = true;
+        }
+
+
+        /// <连接按钮点击事件>
+        /// 
+        /// </summary>
+        /// <param name="sender"></param>
+        /// <param name="e"></param>
+        private void button1_Click(object sender, EventArgs e)
+        {
+            if (button1.Text == "连接"){
+                //IP地址 和 端口号输入不为空
+                if (string.IsNullOrEmpty(textBox1.Text) == false && string.IsNullOrEmpty(textBox2.Text) == false){
+                    try{
+                        IPAddress ipAddress = IPAddress.Parse(textBox1.Text);//获取IP地址
+                        int Port = Convert.ToInt32(textBox2.Text);          //获取端口号
+                        MySocket = new Socket(AddressFamily.InterNetwork,SocketType.Stream, ProtocolType.Tcp);
+                        //使用 BeginConnect 异步连接
+                        MySocket.BeginConnect(ipAddress, Port, new AsyncCallback(ConnectedCallback), MySocket);
+                    }
+                    catch (Exception){
+                        MessageBox.Show("IP地址或端口号错误!", "提示");
                     }
                 }
-                catch
-                {
-                    MessageBox.Show("无法与服务器通信。");
+                else{
+                    MessageBox.Show("IP地址或端口号错误!", "提示");
                 }
             }
-            //禁止当前Socket上的发送与接收
-            socket.Shutdown(SocketShutdown.Both);
-            //关闭Socket，并释放所有关联的资源
-            socket.Close();
+            else
+            {
+                try{
+
+                    MySocket.BeginDisconnect(false,null,null);//断开连接
+                    button1.Text = "连接";
+                }
+                catch (Exception){}
+            }
         }
-        //把socket接收的数据提取jpg头尾标志(ffd8...ffd9)
-        void draw_jpeg(String data, int len)
+
+        /// <连接异步回调函数>
+        /// 
+        /// </summary>
+        /// <param name="ar"></param>
+        void ConnectedCallback(IAsyncResult ar)
+        {
+            //无法再次连接
+            Socket socket = (Socket)ar.AsyncState;//获取Socket
+            try{
+                socket.EndConnect(ar);
+                //设置异步读取数据,接收的数据缓存到TCPBuffer,接收完成跳转ReadCallback函数
+                socket.BeginReceive(TCPBuffer, 0, TCPBufferSize, 0,new AsyncCallback(ReadCallback), socket);
+                Invoke((new Action(() =>
+                {
+                    textBox3.AppendText("成功连接服务器\n");//对话框追加显示数据
+                    button1.Text = "断开";
+                })));
+            }
+            catch (Exception e){
+                Invoke((new Action(() =>
+                {
+                    textBox3.AppendText("连接失败:" + e.ToString());//对话框追加显示数据
+                })));
+            }
+        }
+
+        /// <接收到数据回调函数>
+        /// 
+        /// </summary>
+        /// <param name="ar"></param>
+        void ReadCallback(IAsyncResult ar)
+        {
+            Socket socket = (Socket)ar.AsyncState;//获取链接的Socket
+            int CanReadLen = socket.EndReceive(ar);//结束异步读取回调,获取读取的数据个数
+            //读到数据
+            if (CanReadLen > 0)
+            {
+                Invoke((new Action(() => //C# 3.0以后代替委托的新方法
+                {
+                    if (checkBox1.Checked)//16进制显示
+                    {
+                        //做数据处理
+                        string sTemp = byteToHexStr(TCPBuffer, CanReadLen);   //获得hexStr
+                        textBox3.AppendText(byteToHexStr(TCPBuffer, CanReadLen));//对话框追加显示数据
+                        //含有一个完整包(包含空格)
+                        if (receData != null && receData.Contains("FF D8") && receData.Contains("FF D9"))
+                        {
+                            //完整数据包
+                            receData=GetFullImg(receData);
+                            //draw_jpeg(receData, receData.Length);
+                            pictureBox1.Image = ByteArray2Image(HexString2Bytes(receData));
+                            //finalData = receData;
+                            receData = "";      //清除接收
+                            receData += sTemp;
+                        }
+                        else
+                        {
+                            //不完整数据包
+                            receData += sTemp;
+                            //Log.d(TAG, "receData_temp:" + sTemp);
+                        }
+                    }
+                    else
+                    {
+                        textBox3.AppendText(Encoding.Default.GetString(TCPBuffer, 0, CanReadLen));//对话框追加显示数据
+                    }
+                })));
+                //设置异步读取数据,接收的数据缓存到TCPBuffer,接收完成跳转ReadCallback函数
+                if(button1.Text != "连接")
+                    socket.BeginReceive(TCPBuffer,0, TCPBufferSize, 0, new AsyncCallback(ReadCallback), socket);
+            }
+            else//未读到数据
+            {
+                Invoke((new Action(() => //C# 3.0以后代替委托的新方法
+                {
+                    button1.Text = "连接";
+                    textBox3.AppendText("\n异常断开\n");//对话框追加显示数据
+                })));
+                try
+                {
+                    MySocket.BeginDisconnect(false, null, null);//断开连接
+                }
+                catch (Exception) { }
+            }
+        }
+
+        #region[img]
+        private  string GetFullImg(string data)
         {
             int i;
-            Console.WriteLine("data[1]:"+data[1]);
-            for (i = 0; i < len; i++)
+            int jpeg_pos = 0;
+            string imgHexStr=null;
+            string fullImgHexStr = null;
+            data = data.Replace(" ", "");//清除空格
+            for (i = 0; i < data.Length; i++)
             {
                 //在数据包中检测到jpg头
                 if (data[i] == 'F' && data[i + 1] == 'F' && data[i + 2] == 'D' && data[i + 3] == '8')
@@ -100,38 +180,109 @@ namespace ChatClient
                     jpeg_pos = 0;
                     break;
                 }
-                //在数据包中检测到jpg尾
-                //if (jpeg_pos >= 4 &&
-                //    p_jpeg_buff[jpeg_pos - 3] == 'F' && p_jpeg_buff[jpeg_pos - 4] == 'F' &&
-                //    p_jpeg_buff[jpeg_pos - 1] == '9' && p_jpeg_buff[jpeg_pos - 2] == 'D' &&
-                //    p_jpeg_buff[0] == 'F' && p_jpeg_buff[1] == 'F' && p_jpeg_buff[2] == 'D' && p_jpeg_buff[3] == '8')
+                //写完一个完整包
                 if (jpeg_pos >= 4 &&
                     imgHexStr[jpeg_pos - 3] == 'F' && imgHexStr[jpeg_pos - 4] == 'F' &&
                     imgHexStr[jpeg_pos - 1] == '9' && imgHexStr[jpeg_pos - 2] == 'D' &&
                     imgHexStr[0] == 'F' && imgHexStr[1] == 'F' && imgHexStr[2] == 'D' && imgHexStr[3] == '8')
                 {
-                    //pictureBox1.Image=ByteArray2Image(Char2Byte(p_jpeg_buff));    
-                    pictureBox1.Image = ByteArray2Image(HexString2Bytes(imgHexStr));
+                    fullImgHexStr = imgHexStr;
+                    return imgHexStr;
                 }
 
             }
+            //return fullImgHexStr;
+            return imgHexStr;
         }
-        #region[hex2pic]
-        /// <summary>
-        /// Char2Byte
-        /// </summary>
-        /// <param name="c"></param>
-        /// <returns></returns>
-        public static byte[] Char2Byte(char[] c)
+        private Image ByteArray2Image(byte[] Bytes)
         {
-            int i = 0;
-            byte[] b = new byte[c.Length * 2];
-            for (i = 0; i < c.Length; i++)
+            using (MemoryStream ms = new MemoryStream(Bytes))
             {
-                b[2 * i] = (byte)((c[i] & 0xFF00) >> 8);
-                b[2 * i + 1] = (byte)(c[i] & 0xFF);
+                try
+                {
+                    Image outputImg = Image.FromStream(ms);
+                    return outputImg;
+                }
+                catch (Exception e)
+                {
+                    Console.WriteLine("Err; " + e.ToString());
+                    return pictureBox1.Image;                    
+                }
+                
             }
-            return b;
+        }
+        #endregion
+
+
+        #region[hex]
+        /// <字节数组转16进制字符串>
+        /// <param name="bytes"></param>
+        /// <returns> String 16进制显示形式</returns>
+        public static string byteToHexStr(byte[] bytes, int Len)
+        {
+            string returnStr = "";
+            try
+            {
+                if (bytes != null)
+                {
+                    for (int i = 0; i < Len; i++)
+                    {
+                        returnStr += bytes[i].ToString("X2");
+                        returnStr += " ";//两个16进制用空格隔开,方便看数据
+                    }
+                }
+                return returnStr;
+            }
+            catch (Exception)
+            {
+                return returnStr;
+            }
+        }
+
+        /// <字符串转16进制格式,不够自动前面补零>
+        /// 
+        /// </summary>
+        /// <param name="hexString"></param>
+        /// <returns></returns>
+        private static byte[] strToToHexByte(String hexString)
+        {
+            int i;
+            hexString = hexString.Replace(" ", "");//清除空格
+            if ((hexString.Length % 2) != 0)//奇数个
+            {
+                byte[] returnBytes = new byte[(hexString.Length + 1) / 2];
+                try
+                {
+                    for (i = 0; i < (hexString.Length - 1) / 2; i++)
+                    {
+                        returnBytes[i] = Convert.ToByte(hexString.Substring(i * 2, 2), 16);
+                    }
+                    returnBytes[returnBytes.Length - 1] = Convert.ToByte(hexString.Substring(hexString.Length - 1, 1).PadLeft(2, '0'), 16);
+                }
+                catch
+                {
+                    MessageBox.Show("含有非16进制字符", "提示");
+                    return null;
+                }
+                return returnBytes;
+            }
+            else
+            {
+                byte[] returnBytes = new byte[(hexString.Length) / 2];
+                try
+                {
+                    for (i = 0; i < returnBytes.Length; i++)
+                    {
+                        returnBytes[i] = Convert.ToByte(hexString.Substring(i * 2, 2), 16);
+                    }
+                }
+                catch
+                {
+                    MessageBox.Show("含有非16进制字符", "提示");
+                    return null;
+                }
+                return returnBytes;
+            }
         }
         /// <summary>
         /// hex字符串to字节数组
@@ -141,10 +292,10 @@ namespace ChatClient
         public static byte[] HexString2Bytes(String hexString)
         {
             hexString = hexString.Replace(" ", "");
-            if (hexString.Length % 2 != 0)
-            {
-                throw new ArgumentException("参数长度不正确");
-            }
+            //if (hexString.Length % 2 != 0)
+            //{
+            //    throw new ArgumentException("参数长度不正确");
+            //}
 
             byte[] returnBytes = new byte[hexString.Length / 2];
             for (int i = 0; i < returnBytes.Length; i++)
@@ -154,95 +305,57 @@ namespace ChatClient
 
             return returnBytes;
         }
-        /// <summary>
-        /// 字节数组生成图片
+        #endregion
+
+
+        #region[Btn]
+        /// <清除按钮点击事件>
+        /// 
         /// </summary>
-        /// <param name="Bytes">字节数组</param>
-        /// <returns>图片</returns>
-        private Image ByteArray2Image(byte[] Bytes)
+        /// <param name="sender"></param>
+        /// <param name="e"></param>
+        private void button2_Click(object sender, EventArgs e)
         {
-            using (MemoryStream ms = new MemoryStream(Bytes))
+            textBox3.Clear();
+        }
+
+        /// <发送按钮点击事件>
+        /// 
+        /// </summary>
+        /// <param name="sender"></param>
+        /// <param name="e"></param>
+        private void button3_Click(object sender, EventArgs e)
+        {
+            String Str = textBox4.Text.ToString();//获取发送文本框里面的数据
+            try
             {
-                Image outputImg = Image.FromStream(ms);
-                return outputImg;
+                if (Str.Length > 0)
+                {
+                    if (checkBox2.Checked)//选择16进制发送
+                    {
+                        byte[] byteHex = strToToHexByte(Str);
+                        MySocket.BeginSend(byteHex, 0, byteHex.Length, 0, null, null); //发送数据
+                    }
+                    else
+                    {
+                        byte[] byteArray = Encoding.Default.GetBytes(Str);//Str 转为 Byte值
+                        MySocket.BeginSend(byteArray, 0, byteArray.Length, 0, null, null); //发送数据
+                    }
+                }
             }
+            catch (Exception) { }
+        }
+
+        /// <清除发送按钮点击事件>
+        /// 
+        /// </summary>
+        /// <param name="sender"></param>
+        /// <param name="e"></param>
+        private void button4_Click(object sender, EventArgs e)
+        {
+            textBox4.Clear();
         }
         #endregion
 
-        //创建与服务器的连接，侦听并显示聊天信息
-        private void button1_Click(object sender, EventArgs e)
-        {
-            try
-            {
-                IPP = new IPEndPoint(IPAddress.Parse(textBox1.Text), int.Parse(textBox2.Text));
-                socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
-                socket.Connect(IPP);
-                if (socket.Connected)
-                {
-                    nStream = new NetworkStream(socket);
-                    tReader = new StreamReader(nStream);
-                    wReader = new StreamWriter(nStream);
-                    tAcceptMsg = new Thread(new ThreadStart(this.AcceptMessage));
-                    tAcceptMsg.Start();
-                    bConnected = true;
-                    button1.Enabled = false;
-                    MessageBox.Show("与服务器成功建立连接，可以通信。");
-                }
-            }
-            catch
-            {
-                MessageBox.Show("无法与服务器通信。");
-            }
-        }
-
-        //发送信息
-        private void richTextBox2_KeyPress(object sender, KeyPressEventArgs e)
-        {
-            if (e.KeyChar == (char)13)//按下的是回车键
-            {
-                if (bConnected)
-                {
-                    try
-                    {
-                        //richTextBox2_KeyPress()和AcceptMessage()
-                        //都将向richTextBox1写字符，可能访问有冲突，
-                        //所以，需要多线程互斥
-                        lock (this)
-                        {
-                            richTextBox1.Text = "客户机：" + richTextBox2.Text + richTextBox1.Text;
-                            //客户机聊天信息写入网络流，以便服务器接收
-                            wReader.WriteLine(richTextBox2.Text);
-                            //清理当前缓冲区数据，使所有缓冲数据写入基础设备
-                            wReader.Flush();
-                            //发送成功后，清空输入框并聚集之
-                            richTextBox2.Text = "";
-                            richTextBox2.Focus();
-                        }
-                    }
-                    catch
-                    {
-                        MessageBox.Show("与服务器连接断开。");
-                    }
-                }
-                else
-                {
-                    MessageBox.Show("未与服务器建立连接，不能通信。");
-                }
-            }
-        }
-        
-
-        //关闭窗体时断开socket连接，并终止线程（否则，VS调试程序将仍处于运行状态）
-        private void Form1_FormClosing(object sender, FormClosingEventArgs e)
-        {
-            try
-            {
-                socket.Close();
-                tAcceptMsg.Abort();
-                //todo:关闭线程
-            }
-            catch
-            { }
-        }
     }
 }
