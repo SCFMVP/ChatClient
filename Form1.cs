@@ -114,24 +114,28 @@ namespace ChatClient
                     {
                         //对话框追加显示数据
                         textBox3.AppendText(byteToHexStr(TCPBuffer, CanReadLen));
-
                         //做数据处理(算法也太不好了!!!)
                         string sTemp = byteToHexStr(TCPBuffer, CanReadLen).Replace(" ", ""); ;   //获得hexStr(不带空格)                   
                         //含有一个完整包(不包含空格):16000是确保数据包里有一个完整图片帧
-                        if (receData != null && receData.Length>16000 && receData.Contains("FFD8") && receData.Contains("FFD9"))
+                        if (receData != null && receData.Length>18000 && receData.Contains("FFD8") && receData.Contains("FFD9"))
                         {
                             //提取最前面的一个完整图片数据包
                             pic=GetFullImg(receData);
                             //Console.WriteLine("LatestedFullPacket: "+pic);
                             //显示一帧图片
-                            pictureBox1.Image = ByteArray2Image(HexString2Bytes(pic));
+                            if(pic!=null)
+                                pictureBox1.Image = ByteArray2Image(HexString2Bytes(pic));
                             //receData = "";      //清除接收, 现在不需要清除接收了
                             receData += sTemp;
+                            Console.WriteLine("AllDataLenth: "+receData.Length);
+                            //防止越界
+                            if (receData.Length > 20000)
+                                receData = "";
                         }
                         else
                         {
                             //不包含完整数据包
-                            receData += sTemp;
+                            receData += sTemp;                            
                         }
                     }
                     else
@@ -165,27 +169,25 @@ namespace ChatClient
             int startIndex, endIndex;
             startIndex = endIndex = 0;
             string imgHexStr=null;
-            //data = data.Replace(" ", "");//清除空格
-            Console.WriteLine("data.Length; " + data.Length);   //只读可能出现数据包的长度,提高效率
+            bool startFlag=false;
+            //只读可能出现数据包的长度,提高效率
             for (int i = 0; i < 16000; i++)
             {
                 //在数据包中检测到jpg头:第一次检测到,i就是它的index
                 if (data[i] == 'F' && data[i + 1] == 'F' && data[i + 2] == 'D' && data[i + 3] == '8')
                 { 
                     startIndex = i;
-                    //Console.WriteLine("NewData; "+receData);
+                    startFlag = true;
                 }
-                //在数据包中检测到jpg尾:第一次检测到,i+3就是它的index
-                if (data[i] == 'F' && data[i + 1] == 'F' && data[i + 2] == 'D' && data[i + 3] == '9')
+                //在数据包中检测到jpg尾:第一次检测到,i+3就是它的index,同时要确保头先被检测到
+                if (startFlag && data[i] == 'F' && data[i + 1] == 'F' && data[i + 2] == 'D' && data[i + 3] == '9')
                 {
                     endIndex = i + 3;
                     imgHexStr = data.Substring(startIndex, endIndex - startIndex + 1);  //掐头去尾 
                     receData = data.Substring(endIndex+1);        //更新全局变量:删除FFD9前面用过的数据                   
-                    Console.WriteLine("imgHexStr.Lenth; " + imgHexStr.Length);
-                    break;     //不需要再循环了.
-                    //return imgHexStr;                    
+                    //Console.WriteLine("imgHexStr.Lenth; " + imgHexStr.Length);
+                    break;     //不需要再循环了.               
                 }
-
             }
             return imgHexStr;   //为正确解析则继续显示上一帧画面
         }
