@@ -14,7 +14,7 @@ using System.Text;
   * 修改备注：
   * @version 1.0
   * ==============================================================================*/
-namespace TCPClient
+namespace ChatClient
 {
 
     class Constant

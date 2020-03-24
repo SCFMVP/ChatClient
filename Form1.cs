@@ -104,6 +104,7 @@ namespace ChatClient
         {
             Socket socket = (Socket)ar.AsyncState;//获取链接的Socket
             int CanReadLen = socket.EndReceive(ar);//结束异步读取回调,获取读取的数据个数
+            string pic;
             //读到数据
             if (CanReadLen > 0)
             {
@@ -111,25 +112,26 @@ namespace ChatClient
                 {
                     if (checkBox1.Checked)//16进制显示
                     {
-                        //做数据处理
-                        string sTemp = byteToHexStr(TCPBuffer, CanReadLen);   //获得hexStr
-                        textBox3.AppendText(byteToHexStr(TCPBuffer, CanReadLen));//对话框追加显示数据
-                        //含有一个完整包(包含空格)
-                        if (receData != null && receData.Contains("FF D8") && receData.Contains("FF D9"))
+                        //对话框追加显示数据
+                        textBox3.AppendText(byteToHexStr(TCPBuffer, CanReadLen));
+
+                        //做数据处理(算法也太不好了!!!)
+                        string sTemp = byteToHexStr(TCPBuffer, CanReadLen).Replace(" ", ""); ;   //获得hexStr(不带空格)                   
+                        //含有一个完整包(不包含空格):16000是确保数据包里有一个完整图片帧
+                        if (receData != null && receData.Length>16000 && receData.Contains("FFD8") && receData.Contains("FFD9"))
                         {
-                            //完整数据包
-                            receData=GetFullImg(receData);
-                            //draw_jpeg(receData, receData.Length);
-                            pictureBox1.Image = ByteArray2Image(HexString2Bytes(receData));
-                            //finalData = receData;
-                            receData = "";      //清除接收
+                            //提取最前面的一个完整图片数据包
+                            pic=GetFullImg(receData);
+                            //Console.WriteLine("LatestedFullPacket: "+pic);
+                            //显示一帧图片
+                            pictureBox1.Image = ByteArray2Image(HexString2Bytes(pic));
+                            //receData = "";      //清除接收, 现在不需要清除接收了
                             receData += sTemp;
                         }
                         else
                         {
-                            //不完整数据包
+                            //不包含完整数据包
                             receData += sTemp;
-                            //Log.d(TAG, "receData_temp:" + sTemp);
                         }
                     }
                     else
@@ -158,42 +160,36 @@ namespace ChatClient
 
         #region[img]
         private  string GetFullImg(string data)
-        {
-            int i;
-            int jpeg_pos = 0;
+        {          
+            //注意考虑先FFD9再FFD8的情况:此组数据无效,且保留FFD8内容
+            int startIndex, endIndex;
+            startIndex = endIndex = 0;
             string imgHexStr=null;
-            string fullImgHexStr = null;
-            data = data.Replace(" ", "");//清除空格
-            for (i = 0; i < data.Length; i++)
+            //data = data.Replace(" ", "");//清除空格
+            Console.WriteLine("data.Length; " + data.Length);   //只读可能出现数据包的长度,提高效率
+            for (int i = 0; i < 16000; i++)
             {
-                //在数据包中检测到jpg头
+                //在数据包中检测到jpg头:第一次检测到,i就是它的index
                 if (data[i] == 'F' && data[i + 1] == 'F' && data[i + 2] == 'D' && data[i + 3] == '8')
-                {
-                    jpeg_pos = 0;  //jpeg_buffer数组标号
+                { 
+                    startIndex = i;
+                    //Console.WriteLine("NewData; "+receData);
                 }
-                //循环写入新的数组(分离出来独立的jpeg数据)
-                //p_jpeg_buff[jpeg_pos++] = data[i];
-                imgHexStr += data[i];
-                jpeg_pos++;
-                if (jpeg_pos >= 1024 * 1024)
+                //在数据包中检测到jpg尾:第一次检测到,i+3就是它的index
+                if (data[i] == 'F' && data[i + 1] == 'F' && data[i + 2] == 'D' && data[i + 3] == '9')
                 {
-                    jpeg_pos = 0;
-                    break;
-                }
-                //写完一个完整包
-                if (jpeg_pos >= 4 &&
-                    imgHexStr[jpeg_pos - 3] == 'F' && imgHexStr[jpeg_pos - 4] == 'F' &&
-                    imgHexStr[jpeg_pos - 1] == '9' && imgHexStr[jpeg_pos - 2] == 'D' &&
-                    imgHexStr[0] == 'F' && imgHexStr[1] == 'F' && imgHexStr[2] == 'D' && imgHexStr[3] == '8')
-                {
-                    fullImgHexStr = imgHexStr;
-                    return imgHexStr;
+                    endIndex = i + 3;
+                    imgHexStr = data.Substring(startIndex, endIndex - startIndex + 1);  //掐头去尾 
+                    receData = data.Substring(endIndex+1);        //更新全局变量:删除FFD9前面用过的数据                   
+                    Console.WriteLine("imgHexStr.Lenth; " + imgHexStr.Length);
+                    break;     //不需要再循环了.
+                    //return imgHexStr;                    
                 }
 
             }
-            //return fullImgHexStr;
-            return imgHexStr;
+            return imgHexStr;   //为正确解析则继续显示上一帧画面
         }
+
         private Image ByteArray2Image(byte[] Bytes)
         {
             using (MemoryStream ms = new MemoryStream(Bytes))
